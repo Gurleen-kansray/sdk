@@ -1863,7 +1863,20 @@ void ExternalTypedData::PrintImplementationFieldsImpl(
     const JSONArray& jsarr_fields) const {}
 
 void Pointer::PrintJSONImpl(JSONStream* stream, bool ref) const {
-  Instance::PrintJSONImpl(stream, ref);
+  JSONObject jsobj(stream);
+  PrintSharedInstanceJSON(&jsobj, ref);
+  jsobj.AddProperty("kind", "FfiPointer");
+  jsobj.AddProperty64("address", static_cast<int64_t>(NativeAddress()));
+  if (ref) {
+    return;
+  }
+  const TypeArguments& type_args =
+      TypeArguments::Handle(GetTypeArguments());
+  if (!type_args.IsNull() && type_args.Length() > 0) {
+    const AbstractType& type_arg =
+        AbstractType::Handle(type_args.TypeAt(kNativeTypeArgPos));
+    jsobj.AddProperty("nativeType", type_arg);
+  }
 }
 
 void Pointer::PrintImplementationFieldsImpl(
