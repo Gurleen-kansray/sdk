@@ -18,6 +18,7 @@
 #include "vm/canonical_tables.h"
 #include "vm/closure_functions_cache.h"
 #include "vm/compiler/jit/compiler.h"
+#include "vm/compiler/ffi/native_type.h"
 #include "vm/cpu.h"
 #include "vm/dart_api_impl.h"
 #include "vm/dart_api_message.h"
@@ -5705,7 +5706,6 @@ static void GetFfiStructLayout(Thread* thread, JSONStream* js) {
   auto& pragma_clazz = Class::Handle(zone);
   auto& pragma_library = Library::Handle(zone);
 
-  // Find the _FfiStructLayout pragma
   for (intptr_t i = 0; i < pragmas_array.Length(); i++) {
     pragma ^= pragmas_array.At(i);
     pragma_clazz ^= pragma.clazz();
@@ -5738,14 +5738,11 @@ static void GetFfiStructLayout(Thread* thread, JSONStream* js) {
     name = func.name();
     if (strstr(name.ToCString(), "#offsetOf") != nullptr) {
       const char* full_name = name.ToCString();
-      // Remove "get:" prefix and "#offsetOf" suffix
       char* field_name = zone->MakeCopyOfString(full_name);
-      // Remove "get:" prefix
       const char* without_get = strstr(field_name, "get:");
       if (without_get != nullptr) {
         field_name = zone->MakeCopyOfString(without_get + 4);
       }
-      // Remove "#offsetOf" suffix
       char* hash = strstr(field_name, "#offsetOf");
       if (hash != nullptr) *hash = '\0';
       field_names.Add(field_name);
