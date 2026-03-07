@@ -5578,6 +5578,11 @@ static const MethodParameter* const get_vm_params[] = {
     NO_ISOLATE_PARAMETER,
     nullptr,
 };
+static const MethodParameter* const get_ffi_struct_layout_params[] = {
+  ISOLATE_PARAMETER,
+  new MethodParameter("classId", true),
+  nullptr,
+};
 
 void Service::PrintJSONForEmbedderInformation(JSONObject* jsobj) {
   if (embedder_information_callback_ != nullptr) {
@@ -5666,6 +5671,100 @@ void Service::PrintJSONForVM(JSONStream* js, bool ref) {
 
 static void GetVM(Thread* thread, JSONStream* js) {
   Service::PrintJSONForVM(js, false);
+}
+static void GetFfiStructLayout(Thread* thread, JSONStream* js) {
+  Zone* zone = thread->zone();
+  const char* class_id = js->LookupParam("classId");
+  if (class_id == nullptr) {
+    PrintMissingParamError(js, "classId");
+    return;
+  }
+  ObjectIdRing::LookupResult lookup_result;
+  Object& obj = Object::Handle(
+      LookupHeapObject(thread, class_id, &lookup_result));
+  if (obj.IsNull() || !obj.IsClass()) {
+    PrintInvalidParamError(js, "classId");
+    return;
+  }
+  const Class& cls = Class::Cast(obj);
+
+  // Find the vm:ffi:struct-fields pragma
+  auto& pragmas = Object::Handle(zone);
+  String& pragma_name = String::Handle(zone);
+  pragma_name = Symbols::vm_ffi_struct_fields().ptr();
+  Library::FindPragma(thread, /*only_core=*/false, cls,
+                      pragma_name, /*multiple=*/true, &pragmas);
+
+  if (pragmas.IsNull() || !pragmas.IsGrowableObjectArray()) {
+    PrintInvalidParamError(js, "classId");
+    return;
+  }
+
+  const auto& pragmas_array = GrowableObjectArray::Cast(pragmas);
+  auto& pragma = Instance::Handle(zone);
+  auto& pragma_clazz = Class::Handle(zone);
+  auto& pragma_library = Library::Handle(zone);
+
+  // Find the _FfiStructLayout pragma
+  for (intptr_t i = 0; i < pragmas_array.Length(); i++) {
+    pragma ^= pragmas_array.At(i);
+    pragma_clazz ^= pragma.clazz();
+    pragma_library ^= pragma_clazz.library();
+    if (String::Handle(zone, pragma_clazz.UserVisibleName())
+            .Equals(Symbols::FfiStructLayout()) &&
+        String::Handle(zone, pragma_library.url())
+            .Equals(Symbols::DartFfi())) {
+      break;
+    }
+  }
+
+  // Read fieldTypes from _FfiStructLayout
+  const auto& types_field = Field::Handle(
+      zone, pragma_clazz.LookupFieldAllowPrivate(Symbols::FfiFieldTypes()));
+  const auto& field_types =
+      Array::Handle(zone, Array::RawCast(pragma.GetField(types_field)));
+
+  JSONObject jsobj(js);
+  jsobj.AddProperty("type", "FfiStructLayout");
+  jsobj.AddProperty("class", cls);
+
+  // Get field names from offsetOf functions
+  const Array& funcs = Array::Handle(zone, cls.current_functions());
+  Function& func = Function::Handle(zone);
+  String& name = String::Handle(zone);
+  GrowableArray<const char*> field_names(zone, field_types.Length());
+  for (intptr_t i = 0; i < funcs.Length(); i++) {
+    func ^= funcs.At(i);
+    name = func.name();
+    if (strstr(name.ToCString(), "#offsetOf") != nullptr) {
+      const char* full_name = name.ToCString();
+      // Remove "get:" prefix and "#offsetOf" suffix
+      char* field_name = zone->MakeCopyOfString(full_name);
+      // Remove "get:" prefix
+      const char* without_get = strstr(field_name, "get:");
+      if (without_get != nullptr) {
+        field_name = zone->MakeCopyOfString(without_get + 4);
+      }
+      // Remove "#offsetOf" suffix
+      char* hash = strstr(field_name, "#offsetOf");
+      if (hash != nullptr) *hash = '\0';
+      field_names.Add(field_name);
+    }
+  }
+
+  // Output fields with types
+  JSONArray fields(&jsobj, "fields");
+  auto& field_type = AbstractType::Handle(zone);
+  auto& type_cls = Class::Handle(zone);
+  for (intptr_t i = 0; i < field_types.Length(); i++) {
+    field_type ^= field_types.At(i);
+    type_cls = field_type.type_class();
+    JSONObject field(&fields);
+    if (i < field_names.length()) {
+      field.AddProperty("name", field_names[i]);
+    }
+    field.AddProperty("type", type_cls.UserVisibleNameCString());
+  }
 }
 
 class UriMappingTraits {
@@ -6288,6 +6387,8 @@ static const ServiceMethodDescriptor service_methods_[] = {
     get_version_params },
   { "getVM", GetVM,
     get_vm_params },
+  { "getFfiStructLayout", GetFfiStructLayout,
+    get_ffi_struct_layout_params },
   { "getVMTimeline", GetVMTimeline,
     get_vm_timeline_params },
   { "getVMTimelineFlags", GetVMTimelineFlags,
