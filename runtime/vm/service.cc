@@ -17,6 +17,7 @@
 #include "vm/base64.h"
 #include "vm/canonical_tables.h"
 #include "vm/closure_functions_cache.h"
+#include "vm/class_finalizer.h"
 #include "vm/compiler/jit/compiler.h"
 #include "vm/compiler/ffi/native_type.h"
 #include "vm/cpu.h"
@@ -5724,24 +5725,26 @@ static void GetFfiStructLayout(Thread* thread, JSONStream* js) {
   const auto& field_types =
       Array::Handle(zone, Array::RawCast(pragma.GetField(types_field)));
 
-  JSONObject jsobj(js);
-  jsobj.AddProperty("type", "FfiStructLayout");
-  jsobj.AddProperty("class", cls);
-
-  // Get field names from offsetOf functions
-  const Array& funcs = Array::Handle(zone, cls.current_functions());
-  Function& func = Function::Handle(zone);
+  // Get field names from #offsetOf getter functions (VM name: "get:x#offsetOf")
   String& name = String::Handle(zone);
   GrowableArray<const char*> field_names(zone, field_types.Length());
+  // Ensure class members are loaded so functions() is populated
+#if !defined(DART_PRECOMPILED_RUNTIME)
+  if (!cls.is_finalized()) {
+    ClassFinalizer::LoadClassMembers(cls);
+  }
+#endif
+  const Array& funcs = Array::Handle(zone, cls.functions());
+  Function& func = Function::Handle(zone);
   for (intptr_t i = 0; i < funcs.Length(); i++) {
     func ^= funcs.At(i);
     name = func.name();
-    if (strstr(name.ToCString(), "#offsetOf") != nullptr) {
-      const char* full_name = name.ToCString();
-      char* field_name = zone->MakeCopyOfString(full_name);
-      const char* without_get = strstr(field_name, "get:");
-      if (without_get != nullptr) {
-        field_name = zone->MakeCopyOfString(without_get + 4);
+    const char* fname = name.ToCString();
+    if (strstr(fname, "#offsetOf") != nullptr) {
+      char* field_name = zone->MakeCopyOfString(fname);
+      // Strip "get:" prefix if present
+      if (strncmp(field_name, "get:", 4) == 0) {
+        field_name = field_name + 4;
       }
       char* hash = strstr(field_name, "#offsetOf");
       if (hash != nullptr) *hash = '\0';
@@ -5749,18 +5752,56 @@ static void GetFfiStructLayout(Thread* thread, JSONStream* js) {
     }
   }
 
-  // Output fields with types
-  JSONArray fields(&jsobj, "fields");
-  auto& field_type = AbstractType::Handle(zone);
-  auto& type_cls = Class::Handle(zone);
+auto& field_type = AbstractType::Handle(zone);
+
+#if !defined(DART_PRECOMPILED_RUNTIME)
+  // Build NativeTypes for ABI-aware layout computation
+  compiler::ffi::NativeTypes native_types(zone, field_types.Length());
+  bool layout_available = true;
+
   for (intptr_t i = 0; i < field_types.Length(); i++) {
     field_type ^= field_types.At(i);
-    type_cls = field_type.type_class();
+    const char* error = nullptr;
+    const compiler::ffi::NativeType* native_type =
+        compiler::ffi::NativeType::FromAbstractType(zone, field_type, &error);
+    if (native_type == nullptr || error != nullptr) {
+      layout_available = false;
+      break;
+    }
+    native_types.Add(native_type);
+  }
+  const compiler::ffi::NativeStructType* struct_layout = nullptr;
+  if (layout_available && native_types.length() == field_types.Length()) {
+    struct_layout = &compiler::ffi::NativeStructType::FromNativeTypes(
+        zone, native_types);
+  }
+#endif  // !defined(DART_PRECOMPILED_RUNTIME)
+
+  // Build response
+  JSONObject jsobj(js);
+  jsobj.AddProperty("type", "FfiStructLayout");
+  jsobj.AddProperty("class", cls);
+  #if !defined(DART_PRECOMPILED_RUNTIME)
+  if (struct_layout != nullptr) {
+    jsobj.AddProperty64("totalSize", struct_layout->SizeInBytes());
+  }
+#endif
+
+  JSONArray fields(&jsobj, "fields");
+  for (intptr_t i = 0; i < field_types.Length(); i++) {
+    field_type ^= field_types.At(i);
+    const auto& type_cls = Class::Handle(zone, field_type.type_class());
     JSONObject field(&fields);
     if (i < field_names.length()) {
       field.AddProperty("name", field_names[i]);
     }
     field.AddProperty("type", type_cls.UserVisibleNameCString());
+    #if !defined(DART_PRECOMPILED_RUNTIME)
+    if (struct_layout != nullptr) {
+      field.AddProperty64("byteOffset", struct_layout->member_offsets()[i]);
+      field.AddProperty64("size", native_types[i]->SizeInBytes());
+    }
+#endif
   }
 }
 
