@@ -11,6 +11,14 @@
 #include "include/dart_api.h"
 #include "include/dart_native_api.h"
 #include "platform/globals.h"
+#if defined(DART_HOST_OS_WINDOWS)
+#include <windows.h>
+#elif defined(DART_HOST_OS_LINUX) || defined(DART_HOST_OS_ANDROID)
+#include <sys/uio.h>
+#include <unistd.h>
+#elif defined(DART_HOST_OS_MACOS) || defined(DART_HOST_OS_IOS)
+#include <mach/mach.h>
+#endif
 
 #include "platform/unicode.h"
 #include "platform/utils.h"
@@ -5669,6 +5677,49 @@ void Service::PrintJSONForVM(JSONStream* js, bool ref) {
     intptr_t vm_memory = GetProcessMemoryUsageHelper(&discard_js);
     jsobj.AddProperty("_currentMemory", vm_memory);
   }
+}
+// Reads `size` bytes from `address` into `buffer` using in-process OS APIs
+// that validate the address in the kernel before touching it.
+// Returns true on success, false if the address is invalid or unmapped.
+// Never delivers SIGSEGV — the OS returns an error code instead.
+static bool SafeMemoryRead(uword address,
+                           uint8_t* buffer,
+                           intptr_t size) {
+#if defined(DART_HOST_OS_WINDOWS)
+  SIZE_T bytes_read = 0;
+  return ::ReadProcessMemory(
+      ::GetCurrentProcess(),
+      reinterpret_cast<LPCVOID>(address),
+      buffer,
+      static_cast<SIZE_T>(size),
+      &bytes_read) != 0 &&
+      static_cast<intptr_t>(bytes_read) == size;
+
+#elif defined(DART_HOST_OS_LINUX) || defined(DART_HOST_OS_ANDROID)
+  struct iovec local_iov = {buffer, static_cast<size_t>(size)};
+  struct iovec remote_iov = {reinterpret_cast<void*>(address),
+                             static_cast<size_t>(size)};
+  ssize_t bytes_read = process_vm_readv(
+      getpid(), &local_iov, 1, &remote_iov, 1, 0);
+  return bytes_read == static_cast<ssize_t>(size);
+
+#elif defined(DART_HOST_OS_MACOS) || defined(DART_HOST_OS_IOS)
+  mach_vm_size_t out_size = static_cast<mach_vm_size_t>(size);
+  kern_return_t kr = mach_vm_read_overwrite(
+      mach_task_self(),
+      static_cast<mach_vm_address_t>(address),
+      static_cast<mach_vm_size_t>(size),
+      reinterpret_cast<mach_vm_address_t>(buffer),
+      &out_size);
+  return kr == KERN_SUCCESS &&
+         static_cast<intptr_t>(out_size) == size;
+
+#else
+  USE(address);
+  USE(buffer);
+  USE(size);
+  return false;
+#endif
 }
 
 static void GetVM(Thread* thread, JSONStream* js) {
