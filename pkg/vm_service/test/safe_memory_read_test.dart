@@ -8,7 +8,6 @@ import 'package:test/test.dart';
 import 'package:vm_service/vm_service.dart';
 import 'common/test_helper.dart';
 
-// A simple struct to test memory reading
 final class TestStruct extends Struct {
   @Int32()
   external int x;
@@ -17,22 +16,19 @@ final class TestStruct extends Struct {
   external int y;
 }
 
-late Pointer<TestStruct> validPtr;
+late Pointer<TestStruct> structPtr;
 
 void script() {
-  // Allocate a real struct with known values
-  validPtr = calloc<TestStruct>();
-  validPtr.ref.x = 42;
-  validPtr.ref.y = 99;
-  print('allocated struct at ${validPtr.address}');
-  print('x=${validPtr.ref.x} y=${validPtr.ref.y}');
+  structPtr = calloc<TestStruct>();
+  structPtr.ref.x = 42;
+  structPtr.ref.y = 99;
+  print('struct_address=${structPtr.address}');
 }
 
 final tests = <IsolateTest>[
   (VmService service, IsolateRef isolateRef) async {
     final isolate = await service.getIsolate(isolateRef.id!);
 
-    // Find TestStruct class ID
     final classes = await service.getClassList(isolate.id!);
     String? classId;
     for (final cls in classes.classes!) {
@@ -40,22 +36,60 @@ final tests = <IsolateTest>[
     }
     expect(classId, isNotNull, reason: 'TestStruct class not found');
 
-    // getFfiStructLayout should still work correctly
-    final result = await service.callServiceExtension(
+    final addrResult = await service.evaluate(
+      isolate.id!,
+      isolate.rootLib!.id!,
+      'structPtr.address',
+    );
+    expect(addrResult, isA<InstanceRef>());
+    final address = (addrResult as InstanceRef).valueAsString!;
+
+    // Test 1: layout only
+    final layoutResult = await service.callServiceExtension(
       'getFfiStructLayout',
       isolateId: isolate.id,
       args: {'classId': classId!},
     );
+    final layoutJson = layoutResult.json!;
+    expect(layoutJson['type'], equals('FfiStructLayout'));
+    expect(layoutJson['totalSize'], equals(8));
+    expect(layoutJson['fields'][0]['name'], equals('x'));
+    expect(layoutJson['fields'][0]['byteOffset'], equals(0));
+    expect(layoutJson['fields'][0]['size'], equals(4));
+    expect(layoutJson['fields'][1]['name'], equals('y'));
+    expect(layoutJson['fields'][1]['byteOffset'], equals(4));
+    expect(layoutJson['fields'][1]['size'], equals(4));
 
-    final json = result.json!;
-    expect(json['type'], equals('FfiStructLayout'));
-    expect(json['totalSize'], equals(8)); // two Int32 = 8 bytes
-    expect(json['fields'][0]['name'], equals('x'));
-    expect(json['fields'][0]['byteOffset'], equals(0));
-    expect(json['fields'][0]['size'], equals(4));
-    expect(json['fields'][1]['name'], equals('y'));
-    expect(json['fields'][1]['byteOffset'], equals(4));
-    expect(json['fields'][1]['size'], equals(4));
+    // Test 2: live value reading via SafeMemoryRead()
+    final liveResult = await service.callServiceExtension(
+      'getFfiStructLayout',
+      isolateId: isolate.id,
+      args: {
+        'classId': classId,
+        'address': address,
+      },
+    );
+    final liveJson = liveResult.json!;
+    expect(liveJson['type'], equals('FfiStructLayout'));
+    expect(liveJson['fields'][0]['name'], equals('x'));
+    expect(liveJson['fields'][0]['value'], equals(42));
+    expect(liveJson['fields'][1]['name'], equals('y'));
+    expect(liveJson['fields'][1]['value'], equals(99));
+
+    // Test 3: null address — no crash, safe behavior
+    final nullResult = await service.callServiceExtension(
+      'getFfiStructLayout',
+      isolateId: isolate.id,
+      args: {
+        'classId': classId,
+        'address': '0',
+      },
+    );
+    final nullJson = nullResult.json!;
+    expect(nullJson['type'], equals('FfiStructLayout'));
+    expect(nullJson['fields'][0]['name'], equals('x'));
+    expect(nullJson['fields'][1]['name'], equals('y'));
+    expect(nullJson['fields'][0].containsKey('value'), isFalse);
   },
 ];
 

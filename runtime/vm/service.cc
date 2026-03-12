@@ -5846,11 +5846,51 @@ auto& field_type = AbstractType::Handle(zone);
     if (i < field_names.length()) {
       field.AddProperty("name", field_names[i]);
     }
-    field.AddProperty("type", type_cls.UserVisibleNameCString());
+field.AddProperty("type", type_cls.UserVisibleNameCString());
     #if !defined(DART_PRECOMPILED_RUNTIME)
     if (struct_layout != nullptr) {
-      field.AddProperty64("byteOffset", struct_layout->member_offsets()[i]);
-      field.AddProperty64("size", native_types[i]->SizeInBytes());
+      intptr_t byte_offset = struct_layout->member_offsets()[i];
+      intptr_t field_size = native_types[i]->SizeInBytes();
+      field.AddProperty64("byteOffset", byte_offset);
+      field.AddProperty64("size", field_size);
+
+      // Read live field value using SafeMemoryRead if address provided
+      const char* address_str = js->LookupParam("address");
+      if (address_str != nullptr) {
+        uword base_address = static_cast<uword>(strtoull(address_str, nullptr, 0));
+        if (base_address != 0) {
+          uint8_t buffer[8] = {0};
+          if (SafeMemoryRead(base_address + byte_offset, buffer, field_size)) {
+            // Decode value based on type name
+            const char* type_name = type_cls.UserVisibleNameCString();
+            if (strcmp(type_name, "Int8") == 0) {
+              field.AddProperty("value", static_cast<int64_t>(*reinterpret_cast<int8_t*>(buffer)));
+            } else if (strcmp(type_name, "Int16") == 0) {
+              field.AddProperty("value", static_cast<int64_t>(*reinterpret_cast<int16_t*>(buffer)));
+            } else if (strcmp(type_name, "Int32") == 0) {
+              field.AddProperty("value", static_cast<int64_t>(*reinterpret_cast<int32_t*>(buffer)));
+            } else if (strcmp(type_name, "Int64") == 0) {
+              field.AddProperty("value", *reinterpret_cast<int64_t*>(buffer));
+            } else if (strcmp(type_name, "Uint8") == 0) {
+              field.AddProperty("value", static_cast<int64_t>(*reinterpret_cast<uint8_t*>(buffer)));
+            } else if (strcmp(type_name, "Uint16") == 0) {
+              field.AddProperty("value", static_cast<int64_t>(*reinterpret_cast<uint16_t*>(buffer)));
+            } else if (strcmp(type_name, "Uint32") == 0) {
+              field.AddProperty("value", static_cast<int64_t>(*reinterpret_cast<uint32_t*>(buffer)));
+            } else if (strcmp(type_name, "Uint64") == 0) {
+              field.AddProperty("value", static_cast<int64_t>(*reinterpret_cast<uint64_t*>(buffer)));
+            } else if (strcmp(type_name, "Float") == 0) {
+              field.AddPropertyF("value", "%f", *reinterpret_cast<float*>(buffer));
+            } else if (strcmp(type_name, "Double") == 0) {
+              field.AddPropertyF("value", "%f", *reinterpret_cast<double*>(buffer));
+            } else if (strcmp(type_name, "Bool") == 0) {
+              field.AddProperty("value", *buffer != 0);
+            }
+          } else {
+            field.AddProperty("value", "<unreadable>");
+          }
+        }
+      }
     }
 #endif
   }
