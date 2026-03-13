@@ -5858,10 +5858,12 @@ field.AddProperty("type", type_cls.UserVisibleNameCString());
       const char* address_str = js->LookupParam("address");
       if (address_str != nullptr) {
         uword base_address = static_cast<uword>(strtoull(address_str, nullptr, 0));
-        if (base_address != 0) {
+      if (base_address == 0) {
+          field.AddProperty("readError", "null");
+        } else {
           uint8_t buffer[8] = {0};
-          if (SafeMemoryRead(base_address + byte_offset, buffer, field_size)) {
-            // Decode value based on type name
+          uword read_address = base_address + static_cast<uword>(byte_offset);
+          if (SafeMemoryRead(read_address, buffer, field_size)) {
             const char* type_name = type_cls.UserVisibleNameCString();
             if (strcmp(type_name, "Int8") == 0) {
               field.AddProperty("value", static_cast<int64_t>(*reinterpret_cast<int8_t*>(buffer)));
@@ -5887,7 +5889,7 @@ field.AddProperty("type", type_cls.UserVisibleNameCString());
               field.AddProperty("value", *buffer != 0);
             }
           } else {
-            field.AddProperty("value", "<unreadable>");
+            field.AddProperty("readError", "unmapped");
           }
         }
       }
