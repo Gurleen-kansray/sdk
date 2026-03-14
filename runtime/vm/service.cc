@@ -5859,7 +5859,10 @@ field.AddProperty("type", type_cls.UserVisibleNameCString());
       if (address_str != nullptr) {
         uword base_address = static_cast<uword>(strtoull(address_str, nullptr, 0));
       if (base_address == 0) {
-          field.AddProperty("readError", "null");
+          // Null pointer — structured error response
+          field.AddProperty("readErrorType", "SafeReadError");
+          field.AddProperty("readErrorAddress", address_str);
+          field.AddProperty("readErrorReason", "null");
         } else {
           uint8_t buffer[8] = {0};
           uword read_address = base_address + static_cast<uword>(byte_offset);
@@ -5889,7 +5892,10 @@ field.AddProperty("type", type_cls.UserVisibleNameCString());
               field.AddProperty("value", *buffer != 0);
             }
           } else {
-            field.AddProperty("readError", "unmapped");
+            // Unmapped or invalid address — structured error response
+            field.AddProperty("readErrorType", "SafeReadError");
+            field.AddProperty("readErrorAddress", address_str);
+            field.AddProperty("readErrorReason", "unmapped");
           }
         }
       }
