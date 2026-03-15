@@ -24,10 +24,10 @@
 #include "platform/utils.h"
 #include "vm/base64.h"
 #include "vm/canonical_tables.h"
-#include "vm/closure_functions_cache.h"
 #include "vm/class_finalizer.h"
-#include "vm/compiler/jit/compiler.h"
+#include "vm/closure_functions_cache.h"
 #include "vm/compiler/ffi/native_type.h"
+#include "vm/compiler/jit/compiler.h"
 #include "vm/cpu.h"
 #include "vm/dart_api_impl.h"
 #include "vm/dart_api_message.h"
@@ -5589,9 +5589,9 @@ static const MethodParameter* const get_vm_params[] = {
     nullptr,
 };
 static const MethodParameter* const get_ffi_struct_layout_params[] = {
-  ISOLATE_PARAMETER,
-  new MethodParameter("classId", true),
-  nullptr,
+    ISOLATE_PARAMETER,
+    new MethodParameter("classId", true),
+    nullptr,
 };
 
 void Service::PrintJSONForEmbedderInformation(JSONObject* jsobj) {
@@ -5682,37 +5682,29 @@ void Service::PrintJSONForVM(JSONStream* js, bool ref) {
 // that validate the address in the kernel before touching it.
 // Returns true on success, false if the address is invalid or unmapped.
 // Never delivers SIGSEGV — the OS returns an error code instead.
-static bool SafeMemoryRead(uword address,
-                           uint8_t* buffer,
-                           intptr_t size) {
+static bool SafeMemoryRead(uword address, uint8_t* buffer, intptr_t size) {
 #if defined(DART_HOST_OS_WINDOWS)
   SIZE_T bytes_read = 0;
-  return ::ReadProcessMemory(
-      ::GetCurrentProcess(),
-      reinterpret_cast<LPCVOID>(address),
-      buffer,
-      static_cast<SIZE_T>(size),
-      &bytes_read) != 0 &&
-      static_cast<intptr_t>(bytes_read) == size;
+  return ::ReadProcessMemory(::GetCurrentProcess(),
+                             reinterpret_cast<LPCVOID>(address), buffer,
+                             static_cast<SIZE_T>(size), &bytes_read) != 0 &&
+         static_cast<intptr_t>(bytes_read) == size;
 
 #elif defined(DART_HOST_OS_LINUX) || defined(DART_HOST_OS_ANDROID)
   struct iovec local_iov = {buffer, static_cast<size_t>(size)};
   struct iovec remote_iov = {reinterpret_cast<void*>(address),
                              static_cast<size_t>(size)};
-  ssize_t bytes_read = process_vm_readv(
-      getpid(), &local_iov, 1, &remote_iov, 1, 0);
+  ssize_t bytes_read =
+      process_vm_readv(getpid(), &local_iov, 1, &remote_iov, 1, 0);
   return bytes_read == static_cast<ssize_t>(size);
 
 #elif defined(DART_HOST_OS_MACOS) || defined(DART_HOST_OS_IOS)
   mach_vm_size_t out_size = static_cast<mach_vm_size_t>(size);
   kern_return_t kr = mach_vm_read_overwrite(
-      mach_task_self(),
-      static_cast<mach_vm_address_t>(address),
+      mach_task_self(), static_cast<mach_vm_address_t>(address),
       static_cast<mach_vm_size_t>(size),
-      reinterpret_cast<mach_vm_address_t>(buffer),
-      &out_size);
-  return kr == KERN_SUCCESS &&
-         static_cast<intptr_t>(out_size) == size;
+      reinterpret_cast<mach_vm_address_t>(buffer), &out_size);
+  return kr == KERN_SUCCESS && static_cast<intptr_t>(out_size) == size;
 
 #else
   USE(address);
@@ -5733,8 +5725,8 @@ static void GetFfiStructLayout(Thread* thread, JSONStream* js) {
     return;
   }
   ObjectIdRing::LookupResult lookup_result;
-  Object& obj = Object::Handle(
-      LookupHeapObject(thread, class_id, &lookup_result));
+  Object& obj =
+      Object::Handle(LookupHeapObject(thread, class_id, &lookup_result));
   if (obj.IsNull() || !obj.IsClass()) {
     PrintInvalidParamError(js, "classId");
     return;
@@ -5745,8 +5737,8 @@ static void GetFfiStructLayout(Thread* thread, JSONStream* js) {
   auto& pragmas = Object::Handle(zone);
   String& pragma_name = String::Handle(zone);
   pragma_name = Symbols::vm_ffi_struct_fields().ptr();
-  Library::FindPragma(thread, /*only_core=*/false, cls,
-                      pragma_name, /*multiple=*/true, &pragmas);
+  Library::FindPragma(thread, /*only_core=*/false, cls, pragma_name,
+                      /*multiple=*/true, &pragmas);
 
   if (pragmas.IsNull() || !pragmas.IsGrowableObjectArray()) {
     PrintInvalidParamError(js, "classId");
@@ -5764,8 +5756,7 @@ static void GetFfiStructLayout(Thread* thread, JSONStream* js) {
     pragma_library ^= pragma_clazz.library();
     if (String::Handle(zone, pragma_clazz.UserVisibleName())
             .Equals(Symbols::FfiStructLayout()) &&
-        String::Handle(zone, pragma_library.url())
-            .Equals(Symbols::DartFfi())) {
+        String::Handle(zone, pragma_library.url()).Equals(Symbols::DartFfi())) {
       break;
     }
   }
@@ -5803,7 +5794,7 @@ static void GetFfiStructLayout(Thread* thread, JSONStream* js) {
     }
   }
 
-auto& field_type = AbstractType::Handle(zone);
+  auto& field_type = AbstractType::Handle(zone);
 
 #if !defined(DART_PRECOMPILED_RUNTIME)
   // Build NativeTypes for ABI-aware layout computation
@@ -5823,8 +5814,8 @@ auto& field_type = AbstractType::Handle(zone);
   }
   const compiler::ffi::NativeStructType* struct_layout = nullptr;
   if (layout_available && native_types.length() == field_types.Length()) {
-    struct_layout = &compiler::ffi::NativeStructType::FromNativeTypes(
-        zone, native_types);
+    struct_layout =
+        &compiler::ffi::NativeStructType::FromNativeTypes(zone, native_types);
   }
 #endif  // !defined(DART_PRECOMPILED_RUNTIME)
 
@@ -5832,7 +5823,7 @@ auto& field_type = AbstractType::Handle(zone);
   JSONObject jsobj(js);
   jsobj.AddProperty("type", "FfiStructLayout");
   jsobj.AddProperty("class", cls);
-  #if !defined(DART_PRECOMPILED_RUNTIME)
+#if !defined(DART_PRECOMPILED_RUNTIME)
   if (struct_layout != nullptr) {
     jsobj.AddProperty64("totalSize", struct_layout->SizeInBytes());
   }
@@ -5846,8 +5837,8 @@ auto& field_type = AbstractType::Handle(zone);
     if (i < field_names.length()) {
       field.AddProperty("name", field_names[i]);
     }
-field.AddProperty("type", type_cls.UserVisibleNameCString());
-    #if !defined(DART_PRECOMPILED_RUNTIME)
+    field.AddProperty("type", type_cls.UserVisibleNameCString());
+#if !defined(DART_PRECOMPILED_RUNTIME)
     if (struct_layout != nullptr) {
       intptr_t byte_offset = struct_layout->member_offsets()[i];
       intptr_t field_size = native_types[i]->SizeInBytes();
@@ -5857,45 +5848,75 @@ field.AddProperty("type", type_cls.UserVisibleNameCString());
       // Read live field value using SafeMemoryRead if address provided
       const char* address_str = js->LookupParam("address");
       if (address_str != nullptr) {
-        uword base_address = static_cast<uword>(strtoull(address_str, nullptr, 0));
-      if (base_address == 0) {
+        uword base_address =
+            static_cast<uword>(strtoull(address_str, nullptr, 0));
+        if (base_address == 0) {
           // Null pointer — structured error response
           field.AddProperty("readErrorType", "SafeReadError");
           field.AddProperty("readErrorAddress", address_str);
           field.AddProperty("readErrorReason", "null");
         } else {
-          uint8_t buffer[8] = {0};
-          uword read_address = base_address + static_cast<uword>(byte_offset);
-          if (SafeMemoryRead(read_address, buffer, field_size)) {
-            const char* type_name = type_cls.UserVisibleNameCString();
-            if (strcmp(type_name, "Int8") == 0) {
-              field.AddProperty("value", static_cast<int64_t>(*reinterpret_cast<int8_t*>(buffer)));
-            } else if (strcmp(type_name, "Int16") == 0) {
-              field.AddProperty("value", static_cast<int64_t>(*reinterpret_cast<int16_t*>(buffer)));
-            } else if (strcmp(type_name, "Int32") == 0) {
-              field.AddProperty("value", static_cast<int64_t>(*reinterpret_cast<int32_t*>(buffer)));
-            } else if (strcmp(type_name, "Int64") == 0) {
-              field.AddProperty("value", *reinterpret_cast<int64_t*>(buffer));
-            } else if (strcmp(type_name, "Uint8") == 0) {
-              field.AddProperty("value", static_cast<int64_t>(*reinterpret_cast<uint8_t*>(buffer)));
-            } else if (strcmp(type_name, "Uint16") == 0) {
-              field.AddProperty("value", static_cast<int64_t>(*reinterpret_cast<uint16_t*>(buffer)));
-            } else if (strcmp(type_name, "Uint32") == 0) {
-              field.AddProperty("value", static_cast<int64_t>(*reinterpret_cast<uint32_t*>(buffer)));
-            } else if (strcmp(type_name, "Uint64") == 0) {
-              field.AddProperty("value", static_cast<int64_t>(*reinterpret_cast<uint64_t*>(buffer)));
-            } else if (strcmp(type_name, "Float") == 0) {
-              field.AddPropertyF("value", "%f", *reinterpret_cast<float*>(buffer));
-            } else if (strcmp(type_name, "Double") == 0) {
-              field.AddPropertyF("value", "%f", *reinterpret_cast<double*>(buffer));
-            } else if (strcmp(type_name, "Bool") == 0) {
-              field.AddProperty("value", *buffer != 0);
-            }
+          const char* type_name = type_cls.UserVisibleNameCString();
+          bool is_primitive =
+              strcmp(type_name, "Int8") == 0 ||
+              strcmp(type_name, "Int16") == 0 ||
+              strcmp(type_name, "Int32") == 0 ||
+              strcmp(type_name, "Int64") == 0 ||
+              strcmp(type_name, "Uint8") == 0 ||
+              strcmp(type_name, "Uint16") == 0 ||
+              strcmp(type_name, "Uint32") == 0 ||
+              strcmp(type_name, "Uint64") == 0 ||
+              strcmp(type_name, "Float") == 0 ||
+              strcmp(type_name, "Double") == 0 ||
+              strcmp(type_name, "Bool") == 0;
+          if (!is_primitive) {
+            // Nested struct or union — report offset for client-side expansion
+            field.AddProperty("nestedStructOffset",
+                static_cast<int64_t>(byte_offset));
+            field.AddProperty("nestedStructType", type_name);
           } else {
-            // Unmapped or invalid address — structured error response
-            field.AddProperty("readErrorType", "SafeReadError");
-            field.AddProperty("readErrorAddress", address_str);
-            field.AddProperty("readErrorReason", "unmapped");
+            uint8_t buffer[8] = {0};
+            uword read_address =
+                base_address + static_cast<uword>(byte_offset);
+            if (SafeMemoryRead(read_address, buffer, field_size)) {
+              if (strcmp(type_name, "Int8") == 0) {
+                field.AddProperty("value", static_cast<int64_t>(
+                    *reinterpret_cast<int8_t*>(buffer)));
+              } else if (strcmp(type_name, "Int16") == 0) {
+                field.AddProperty("value", static_cast<int64_t>(
+                    *reinterpret_cast<int16_t*>(buffer)));
+              } else if (strcmp(type_name, "Int32") == 0) {
+                field.AddProperty("value", static_cast<int64_t>(
+                    *reinterpret_cast<int32_t*>(buffer)));
+              } else if (strcmp(type_name, "Int64") == 0) {
+                field.AddProperty("value",
+                    *reinterpret_cast<int64_t*>(buffer));
+              } else if (strcmp(type_name, "Uint8") == 0) {
+                field.AddProperty("value", static_cast<int64_t>(
+                    *reinterpret_cast<uint8_t*>(buffer)));
+              } else if (strcmp(type_name, "Uint16") == 0) {
+                field.AddProperty("value", static_cast<int64_t>(
+                    *reinterpret_cast<uint16_t*>(buffer)));
+              } else if (strcmp(type_name, "Uint32") == 0) {
+                field.AddProperty("value", static_cast<int64_t>(
+                    *reinterpret_cast<uint32_t*>(buffer)));
+              } else if (strcmp(type_name, "Uint64") == 0) {
+                field.AddProperty("value", static_cast<int64_t>(
+                    *reinterpret_cast<uint64_t*>(buffer)));
+              } else if (strcmp(type_name, "Float") == 0) {
+                field.AddPropertyF("value", "%f",
+                    *reinterpret_cast<float*>(buffer));
+              } else if (strcmp(type_name, "Double") == 0) {
+                field.AddPropertyF("value", "%f",
+                    *reinterpret_cast<double*>(buffer));
+              } else if (strcmp(type_name, "Bool") == 0) {
+                field.AddProperty("value", *buffer != 0);
+              }
+            } else {
+              field.AddProperty("readErrorType", "SafeReadError");
+              field.AddProperty("readErrorAddress", address_str);
+              field.AddProperty("readErrorReason", "unmapped");
+            }
           }
         }
       }
