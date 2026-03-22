@@ -2169,6 +2169,13 @@ abstract class DartDebugAdapter<TL extends LaunchRequestArguments,
             variablesReference: 0,
           ));
         } else if (object is vm.Instance) {
+          final ffiFields = await _tryInspectFfiPointer(
+            thread, object,
+            buildEvaluateName('', parentInstanceRefId: data.id),
+          );
+          if (ffiFields != null) {
+            variables.addAll(ffiFields);
+          } else {
           variables.addAll(await _converter.convertVmInstanceToVariablesList(
             thread,
             object,
@@ -2178,6 +2185,7 @@ abstract class DartDebugAdapter<TL extends LaunchRequestArguments,
             numItems: childCount,
             format: format,
           ));
+          } // end ffi else
         } else {
           variables.add(Variable(
             name: '<eval error>',
@@ -2906,6 +2914,71 @@ abstract class DartDebugAdapter<TL extends LaunchRequestArguments,
     } else if (uri.isScheme('file')) {
       return uri.toFilePath();
     } else {
+      return null;
+    }
+  }
+
+  Future<List<Variable>?> _tryInspectFfiPointer(
+    ThreadInfo thread,
+    vm.Instance instance,
+    String? evaluateName,
+  ) async {
+    if (evaluateName == null || evaluateName.isEmpty) return null;
+    final className = instance.classRef?.name ?? '';
+    if (!className.startsWith('Pointer<')) return null;
+    if (className == 'Pointer<Never>') return null;
+    final match = RegExp(r'^Pointer<(.+)>$').firstMatch(className);
+    if (match == null) return null;
+    final structTypeName = match.group(1)!;
+    int address;
+    try {
+      final evalResult = await vmService?.evaluateInFrame(
+        thread.isolate.id!,
+        0,
+        '$evaluateName.address',
+      );
+      if (evalResult == null) return null;
+      if (evalResult is! vm.InstanceRef) return null;
+      final addrStr = evalResult.valueAsString;
+      if (addrStr == null) return null;
+      address = int.parse(addrStr);
+    } catch (_) {
+      return null;
+    }
+    if (address == 0) {
+      return [
+        Variable(
+          name: '<null pointer>',
+          value: 'Cannot inspect: address is 0x0',
+          variablesReference: 0,
+        ),
+      ];
+    }
+    try {
+      final result = await vmService?.callServiceExtension(
+        'ext.dart.ffi.inspectMemory',
+        isolateId: thread.isolate.id,
+        args: {
+          'address': address.toString(),
+          'typeName': structTypeName,
+        },
+      );
+      if (result == null) return null;
+      final fields = result.json?['fields'] as List?;
+      if (fields == null || fields.isEmpty) return null;
+      return fields.map<Variable>((field) {
+        final name = (field['name'] as String?) ?? '<field>';
+        final type = (field['type'] as String?) ?? '';
+        final value = field['value']?.toString() ?? '<unreadable>';
+        final offset = field['byteOffset']?.toString() ?? '?';
+        return Variable(
+          name: name,
+          type: type,
+          value: '$value  [+${offset}B]',
+          variablesReference: 0,
+        );
+      }).toList();
+    } catch (_) {
       return null;
     }
   }
